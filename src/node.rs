@@ -72,7 +72,7 @@ impl SendBufferEntry {
     /// Get the IDs of nodes that must send their hash to this ID.
     pub fn dependencies_in(id: u64) -> Vec<u64> {
         let out = match id % 5 {
-            0 => vec![-15i64, -5, -1, 1],
+            0 => vec![-15i64, -5, -4, -1, 1],
             1 => vec![1, 3],
             2 => vec![1],
             3 => Vec::new(),
@@ -162,20 +162,25 @@ impl SendBuffer {
 
         // Check if the node already exists.
         self.latest_id = node.id;
-        let entry = self.get_or_create(node.id);
+        let entry = self.get_or_create(node.id)?;
         entry.payload = node.payload;
 
         Ok(())
     }
 
     /// Returns the entry if it exists, or create it and returns a mutable reference to it.
-    pub fn get_or_create(&mut self, id: u64) -> &mut SendBufferEntry {
+    pub fn get_or_create(&mut self, id: u64) -> Result<&mut SendBufferEntry> {
+        if id < self.lowest_id || id >= self.lowest_id + BUFF_SIZE as u64 {
+            return Err(Error::OutOfBoundId);
+        }
+
         let index = index!(id);
         let entry = &self.buffer[index];
         if entry.id != id {
             self.buffer[index] = SendBufferEntry::new_id(id);
         }
-        &mut self.buffer[index]
+        
+        Ok(&mut self.buffer[index])
     }
 
     /// Forwards its packet hash to its output dependencies.
@@ -209,7 +214,7 @@ impl SendBuffer {
         // Send the hashes to all exiting nodes in the graph.
         let out_dep = entry.dependencies_out();
         for &next_node in out_dep.iter() {
-            let node = self.get_or_create(next_node);
+            let node = self.get_or_create(next_node)?;
             node.hashes.push_back(hash);
         }
 
@@ -227,6 +232,8 @@ impl SendBuffer {
             let entry = &mut self.buffer[index];
             if entry.id == self.lowest_id && entry.ready {
                 out.push(entry.take());
+            } else {
+                break;
             }
 
             self.lowest_id += 1;
@@ -240,7 +247,7 @@ impl SendBuffer {
         let id = self.next_node_id_hash;
 
         self.next_node_id_hash = match id % 5 {
-            0 => id + 5,
+            0 => id + 8,
             1 => id.saturating_sub(1),
             2 => id + 2,
             3 => id.saturating_sub(1),
@@ -290,14 +297,21 @@ mod tests {
             assert_eq!(sb.forwards_hash(id as u64), Err(Error::MissingHash));
         }
 
-        assert_eq!(sb.next_node_id_hash(), 3);
-        assert_eq!(sb.forwards_hash(3), Ok(()));
-        let entry = &sb.buffer[3];
-        assert_eq!(entry.id, 3);
-        assert!(entry.ready);
-        assert_eq!(sb.next_node_id_hash(), 2);
-        assert_eq!(sb.forwards_hash(2), Ok(()));
+        for _ in 0..9 {
+            let id = sb.next_node_id_hash();
+            if id as usize > BUFF_SIZE {
+                break;
+            }
+            assert_eq!(sb.forwards_hash(id), Ok(()));
+            let entry = &sb.buffer[id as usize];
+            assert_eq!(entry.id, id);
+            assert!(entry.ready);
+        }
 
-        // TODO: continue distributing the hashes.
+        // Now all packets should be able to be sent on the wire.
+        let out = sb.pop_ready_in_sequence();
+        println!("{:?}", out.iter().map(|p| p.id).collect::<Vec<_>>());
+        assert_eq!(out.len(), 5);
+        assert_eq!(sb.lowest_id, 5);
     }
 }
