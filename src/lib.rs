@@ -1,14 +1,21 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+pub type PktHash = [u8; 32];
+pub type Signature = [u8; 64];
+
+const ALTA_A: usize = 3;
+const ALTA_P: usize = 5;
+
+pub mod node;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Error {
+    /// The node has an ID out of bounds.
+    OutOfBoundId,
+
+    /// The current node misses some packet hashes and cannot be processed.
+    MissingHash,
+
+    /// Trying to insert an illegal node in the graph.
+    IllegalInsert,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub type Result<T> = std::result::Result<T, Error>;
