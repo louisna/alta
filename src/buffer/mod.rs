@@ -17,6 +17,7 @@ macro_rules! index {
     };
 }
 
+#[derive(PartialEq, Eq)]
 /// Internal representation of an element in the Buffer.
 pub struct BufferEntry {
     /// Ordered list of packet hashes.
@@ -241,3 +242,4 @@ mod testing {
 
 pub mod recv_buf;
 pub mod send_buf;
+pub mod bytes;

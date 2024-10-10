@@ -4,8 +4,6 @@ pub type Signature = [u8; 64];
 const ALTA_A: usize = 3;
 const ALTA_P: usize = 5;
 
-pub mod buffer;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     /// The node has an ID out of bounds.
@@ -28,6 +26,9 @@ pub enum Error {
     /// The current node cannot authenticate a children's node.
     /// This happens whether the node is not itself authenticated.
     NotAuthenticated,
+
+    /// Decoding error.
+    Decoding,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,3 +47,5 @@ pub enum State {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+pub mod buffer;
