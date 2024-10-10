@@ -151,8 +151,7 @@ mod tests {
 
         for node in nodes.drain(..) {
                 // Push as many nodes as possible.
-                let id = node.id;
-                if let Err(e) = rb.insert(node) {
+                if let Err(_) = rb.insert(node) {
                     assert!(false);
                 }
 
