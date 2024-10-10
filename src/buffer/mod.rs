@@ -1,4 +1,6 @@
 use std::collections::VecDeque;
+use std::fmt::Debug;
+use std::u64;
 
 use crate::Error;
 use crate::Result;
@@ -7,7 +9,7 @@ use crate::ALTA_A;
 use crate::ALTA_P;
 use crate::{PktHash, Signature};
 
-const BUFF_SIZE: usize = ALTA_A * ALTA_P + 1;
+const BUFF_SIZE: usize = (ALTA_A * ALTA_P + 1) * 2;
 
 macro_rules! index {
     ($s:expr) => {
@@ -35,6 +37,18 @@ pub struct BufferEntry {
 
     /// The state of the node.
     state: State,
+}
+
+impl Debug for BufferEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BufferEntry")
+            .field("hashes", &self.hashes.len())
+            .field("signature", &self.signature)
+            .field("id", &self.id)
+            .field("dependencies", &self.dependencies)
+            .field("state", &self.state)
+            .finish()
+    }
 }
 
 impl BufferEntry {
@@ -81,7 +95,8 @@ impl BufferEntry {
             _ => Vec::new(),
         };
 
-        let out = out.iter()
+        let out = out
+            .iter()
             .map(|&v| {
                 if v < 0 {
                     id.checked_sub(-v as u64)
@@ -97,18 +112,6 @@ impl BufferEntry {
     /// The state of the node.
     pub fn state(&self) -> State {
         self.state
-    }
-
-    /// Take the content of the buffer into a new node.
-    pub fn take(&mut self, new_state: State) -> BufferEntry {
-        BufferEntry {
-            id: self.id,
-            payload: self.payload.take(),
-            hashes: self.hashes.drain(..).collect(),
-            signature: self.signature.take(),
-            dependencies: self.dependencies.drain(..).collect(),
-            state: new_state,
-        }
     }
 
     /// Computes the hash of the packet with its children hashes.
@@ -130,7 +133,7 @@ impl BufferEntry {
                 return Ok(());
             }
         }
-        
+
         Err(Error::BadAuthentication)
     }
 }
@@ -140,7 +143,7 @@ impl BufferEntry {
 pub struct Buffer {
     /// Data.
     /// The maximum number of hashes that must be buffered is p(a - 1) = 10.
-    buffer: Vec<BufferEntry>,
+    buffer: Vec<Option<BufferEntry>>,
 
     /// Lowest ID buffered.
     lowest_id: u64,
@@ -159,13 +162,15 @@ impl Buffer {
     /// Creates a new, empty buffer.
     fn new(is_send: bool) -> Self {
         Self {
-            buffer: (0..BUFF_SIZE)
-                .map(|id| BufferEntry::new_id(id as u64))
-                .collect(),
+            buffer: (0..BUFF_SIZE).map(|_| None).collect(),
             lowest_id: 0,
             latest_id: 0,
             next_node_id_hash: 3,
-            state_to_pop: if is_send { State::ReadySent } else { State::Authenticated },
+            state_to_pop: if is_send {
+                State::ReadySent
+            } else {
+                State::Authenticated
+            },
         }
     }
 
@@ -177,11 +182,11 @@ impl Buffer {
 
         let index = index!(id);
         let entry = &self.buffer[index];
-        if entry.id != id {
-            self.buffer[index] = BufferEntry::new_id(id);
+        if entry.as_ref().is_some_and(|e| e.id != id) || entry.is_none() {
+            self.buffer[index] = Some(BufferEntry::new_id(id));
         }
-        
-        Ok(&mut self.buffer[index])
+
+        Ok(self.buffer[index].as_mut().unwrap())
     }
 
     /// Returns the next node ID to process to forward packet hashes.
@@ -208,9 +213,9 @@ impl Buffer {
         for _ in 0..BUFF_SIZE {
             let index = index!(self.lowest_id);
 
-            let entry = &mut self.buffer[index];
-            if entry.id == self.lowest_id && entry.state == self.state_to_pop {
-                out.push(entry.take(self.state_to_pop));
+            let entry = self.buffer[index].as_mut();
+            if entry.is_some_and(|entry| entry.id == self.lowest_id && entry.state == self.state_to_pop) {
+                out.push(self.buffer[index].take().unwrap());
             } else {
                 break;
             }
@@ -228,11 +233,11 @@ mod testing {
 
     impl BufferEntry {
         pub fn dummy(id: u64) -> Self {
-            let payload = vec![42u8; 100];
+            let payload = vec![42u8; 20];
             Self::new(id, payload)
         }
     }
 }
 
-pub mod send_buf;
 pub mod recv_buf;
+pub mod send_buf;

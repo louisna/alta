@@ -1,9 +1,9 @@
 use super::Buffer;
 use super::BufferEntry;
-use crate::Result;
-use crate::Error;
-use super::BUFF_SIZE;
 use super::State;
+use super::BUFF_SIZE;
+use crate::Error;
+use crate::Result;
 
 /// SendBuffer-specific methods.
 pub trait SendBuffer {
@@ -53,38 +53,79 @@ impl SendBuffer for Buffer {
     /// Returns an error `MissingHash` if this node does not have all the required hashes to proceed.
     fn forwards_hash(&mut self, id: u64) -> Result<()> {
         let idx = index!(id);
-        let entry = &mut self.buffer[idx];
+        let entry_opt = self.buffer[idx].as_mut();
 
-        // Already good for this node.
-        if entry.state == State::ReadySent {
-            return Ok(());
-        }
-
-        if id != entry.id {
-            return Err(Error::OutOfBoundId);
-        }
-
-        if entry.dependencies.len() != entry.hashes.len() {
-            return Err(Error::MissingHash);
-        }
-
-        // TODO: compute the hash of the node based on all the received hashes etc.
-        let hash = entry.compute_total_hash();
-
-        // Node is now ready to be sent on the wire.
-        entry.state = State::ReadySent;
-
-        // Send the hashes to all exiting nodes in the graph.
-        let out_dep = entry.dependencies_out();
-        for &next_node in out_dep.iter() {
-            let node = self.get_or_create(next_node)?;
-            node.hashes.push_back(hash);
+        if let Some(entry) = entry_opt {
+            // Already good for this node.
+            if entry.state == State::ReadySent {
+                return Ok(());
+            }
+    
+            if id != entry.id {
+                return Err(Error::OutOfBoundId);
+            }
+    
+            if entry.dependencies.len() != entry.hashes.len() {
+                return Err(Error::MissingHash);
+            }
+    
+            // Ensure that we can push this node only if we can already propagate its hashes.
+            if entry
+                .dependencies_out()
+                .iter()
+                .max()
+                .map(|&m| m >= self.lowest_id + BUFF_SIZE as u64)
+                .unwrap_or(false)
+            {
+                return Err(Error::OutOfBoundId);
+            }
+    
+            // TODO: compute the hash of the node based on all the received hashes etc.
+            let hash = entry.compute_total_hash();
+    
+            // Node is now ready to be sent on the wire.
+            entry.state = State::ReadySent;
+    
+            // Send the hashes to all exiting nodes in the graph.
+            let out_dep = entry.dependencies_out();
+            for &next_node in out_dep.iter() {
+                let node = self.get_or_create(next_node)?;
+                node.hashes.push_back(hash);
+            }
         }
 
         Ok(())
     }
 }
 
+#[cfg(test)]
+mod testing {
+    use super::*;
+
+    impl Buffer {
+        /// Push as many packets as possible in the buffer.
+        /// Returns the next ID.
+        pub fn push_pkts(&mut self, start_id: u64) -> u64 {
+            let mut id = start_id;
+            loop {
+                let entry = BufferEntry::dummy(id);
+                if let Err(_) = self.insert_in_sequence(entry) {
+                    break;
+                }
+                id += 1;
+            }
+            id
+        }
+
+        /// Forward as many hashes as possible.
+        /// Iterate over all elements of the buffer.
+        pub fn forw_hash(&mut self) {
+            for i in 0..BUFF_SIZE {
+                let _ = self.forwards_hash(self.lowest_id + i as u64);
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -92,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_send_buffer() {
-        let mut sb = Buffer::new(true);
+        let mut sb: Buffer = SendBuffer::new();
 
         for id in 0..BUFF_SIZE {
             let entry = BufferEntry::dummy(id as u64);
@@ -118,7 +159,7 @@ mod tests {
                 break;
             }
             assert_eq!(sb.forwards_hash(id), Ok(()));
-            let entry = &sb.buffer[id as usize];
+            let entry = sb.buffer[id as usize].as_ref().unwrap();
             assert_eq!(entry.id, id);
             assert_eq!(entry.state, State::ReadySent);
         }
